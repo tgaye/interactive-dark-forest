@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Dark Forest</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #canvas-container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: center;
+            position: relative;
+        }
+    </style>
+
+<base target="_self">
+
+
+  <button id="fs-toggle">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M1.5 1H6v1.5H3v3H1.5V1zM10 1h4.5v4.5H13v-3h-3V1zM1.5 10.5H3v3h3V15H1.5v-4.5zM13 13.5v-3h1.5V15H10v-1.5h3z"></path>
+    </svg>
+  </button>
+    <div id="canvas-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.8.0/lib/p5.js"></script>
+    <script>
+        const sketch = (p) => {
+            let fireflies = [];
+            let trees = [];
+            let fogParticles = [];
+            let moon;
+            let maxFireflies = 150;
+            let fogDensity = 0.3;
+            let colorPalette = [
+                p.color(50, 80, 30),
+                p.color(30, 50, 20),
+                p.color(20, 30, 10),
+                p.color(10, 20, 5)
+            ];
+            let fireflyColors = [
+                p.color(255, 240, 180, 200),
+                p.color(255, 220, 150, 200),
+                p.color(220, 255, 180, 200)
+            ];
+            let lastFrameTime = 0;
+            let frameRateMonitor = 0;
+            let qualityLevel = 1;
+
+            class Firefly {
+                constructor() {
+                    this.pos = p.createVector(
+                        p.random(p.width),
+                        p.random(p.height)
+                    );
+                    this.target = p.createVector(
+                        p.random(p.width),
+                        p.random(p.height)
+                    );
+                    this.vel = p.createVector();
+                    this.acc = p.createVector();
+                    this.maxSpeed = p.random(0.5, 1.5);
+                    this.maxForce = 0.05;
+                    this.size = p.random(2, 5);
+                    this.color = fireflyColors[p.floor(p.random(fireflyColors.length))];
+                    this.brightness = p.random(0.3, 1);
+                    this.flickerSpeed = p.random(0.01, 0.05);
+                    this.flickerOffset = p.random(100);
+                    this.attraction = p.random(0.2, 0.8);
+                }
+
+                update() {
+                    // Apply attraction to mouse
+                    if (p.mouseX > 0 && p.mouseX < p.width && p.mouseY > 0 && p.mouseY < p.height) {
+                        const mouseDist = p.dist(this.pos.x, this.pos.y, p.mouseX, p.mouseY);
+                        const mouseInfluence = p.map(mouseDist, 0, 200, this.attraction, 0, true);
+                        
+                        const mouseVec = p.createVector(p.mouseX, p.mouseY);
+                        const desired = p5.Vector.sub(mouseVec, this.pos);
+                        desired.setMag(this.maxSpeed * mouseInfluence);
+                        const steer = p5.Vector.sub(desired, this.vel);
+                        steer.limit(this.maxForce * mouseInfluence);
+                        this.acc.add(steer);
+                    }
+
+                    // Random wandering behavior
+                    if (p.random() < 0.02 || p.dist(this.pos.x, this.pos.y, this.target.x, this.target.y) < 10) {
+                        this.target = p.createVector(
+                            p.random(p.width),
+                            p.random(p.height)
+                        );
+                    }
+
+                    const desired = p5.Vector.sub(this.target, this.pos);
+                    desired.setMag(this.maxSpeed);
+                    const steer = p5.Vector.sub(desired, this.vel);
+                    steer.limit(this.maxForce);
+                    this.acc.add(steer);
+
+                    // Update physics
+                    this.vel.add(this.acc);
+                    this.vel.limit(this.maxSpeed);
+                    this.pos.add(this.vel);
+                    this.acc.mult(0);
+
+                    // Wrap around edges
+                    if (this.pos.x < 0) this.pos.x = p.width;
+                    if (this.pos.x > p.width) this.pos.x = 0;
+                    if (this.pos.y < 0) this.pos.y = p.height;
+                    if (this.pos.y > p.height) this.pos.y = 0;
+
+                    // Update flickering brightness
+                    this.brightness = 0.5 + 0.5 * p.noise(this.flickerOffset + p.frameCount * this.flickerSpeed);
+                }
+
+                display() {
+                    p.noStroke();
+                    const glowSize = this.size * 6 * this.brightness;
+                    const glowAlpha = 50 * this.brightness;
+                    
+                    // Glow effect
+                    p.fill(p.red(this.color), p.green(this.color), p.blue(this.color), glowAlpha);
+                    p.ellipse(this.pos.x, this.pos.y, glowSize, glowSize);
+                    
+                    // Core light
+                    p.fill(p.red(this.color), p.green(this.color), p.blue(this.color), 200 * this.brightness);
+                    p.ellipse(this.pos.x, this.pos.y, this.size * 1.5, this.size * 1.5);
+                }
+            }
+
+            class Tree {
+                constructor(x, width, height) {
+                    this.x = x;
+                    this.width = width;
+                    this.height = height;
+                    this.branches = [];
+                    this.createBranches();
+                }
+
+                createBranches() {
+                    const branchCount = p.floor(p.map(this.height, 50, p.height * 0.8, 3, 10));
+                    for (let i = 0; i < branchCount; i++) {
+                        const yPos = p.map(i, 0, branchCount - 1, this.height * 0.7, this.height * 0.2);
+                        const length = p.random(this.width * 0.8, this.width * 2);
+                        const angle = p.random(-p.PI/4, p.PI/4);
+                        this.branches.push({
+                            y: yPos,
+                            length: length,
+                            angle: angle,
+                            width: p.random(1, 3)
+                        });
+                    }
+                }
+
+                display() {
+                    // Trunk
+                    p.fill(colorPalette[3]);
+                    p.noStroke();
+                    p.rect(this.x - this.width/2, p.height - this.height, this.width, this.height);
+                    
+                    // Branches
+                    p.stroke(colorPalette[2]);
+                    for (const branch of this.branches) {
+                        p.strokeWeight(branch.width);
+                        p.push();
+                        p.translate(this.x, p.height - this.height + branch.y);
+                        p.rotate(branch.angle);
+                        p.line(0, 0, branch.length, 0);
+                        p.pop();
+                    }
+                    
+                    // Leaves/foliage
+                    const leafDensity = p.map(this.height, 50, p.height * 0.8, 5, 15);
+                    for (let i = 0; i < leafDensity * qualityLevel; i++) {
+                        const yPos = p.random(this.height * 0.2, this.height * 0.7);
+                        const xPos = this.x + p.random(-this.width * 2, this.width * 2);
+                        const size = p.random(10, 30) * p.map(yPos, this.height * 0.2, this.height * 0.7, 0.5, 1.5);
+                        
+                        p.fill(
+                            p.lerpColor(colorPalette[0], colorPalette[1], p.random())
+                        );
+                        p.noStroke();
+                        p.ellipse(
+                            xPos, 
+                            p.height - this.height + yPos, 
+                            size, 
+                            size * p.random(0.8, 1.2)
+                        );
+                    }
+                }
+            }
+
+            class FogParticle {
+                constructor() {
+                    this.pos = p.createVector(
+                        p.random(p.width),
+                        p.random(p.height)
+                    );
+                    this.size = p.random(50, 150);
+                    this.speed = p.random(0.1, 0.5);
+                    this.alpha = p.random(10, 30);
+                    this.direction = p.random(p.TWO_PI);
+                }
+
+                update() {
+                    this.pos.x += p.cos(this.direction) * this.speed;
+                    this.pos.y += p.sin(this.direction) * this.speed;
+                    
+                    // Wrap around edges
+                    if (this.pos.x < -this.size) this.pos.x = p.width + this.size;
+                    if (this.pos.x > p.width + this.size) this.pos.x = -this.size;
+                    if (this.pos.y < -this.size) this.pos.y = p.height + this.size;
+                    if (this.pos.y > p.height + this.size) this.pos.y = -this.size;
+                }
+
+                display() {
+                    p.noStroke();
+                    p.fill(200, 220, 255, this.alpha);
+                    p.ellipse(this.pos.x, this.pos.y, this.size, this.size);
+                }
+            }
+
+            p.setup = () => {
+                const canvas = p.createCanvas(p.min(p.windowWidth, 1200), p.min(p.windowHeight * 0.9, 800));
+                canvas.parent('canvas-container');
+                p.colorMode(p.RGB, 255, 255, 255, 1);
+                
+                // Create trees
+                const treeCount = p.map(p.width, 300, 1200, 5, 15);
+                for (let i = 0; i < treeCount; i++) {
+                    const x = p.map(i, 0, treeCount - 1, -p.width * 0.1, p.width * 1.1);
+                    const width = p.random(10, 30);
+                    const height = p.random(p.height * 0.3, p.height * 0.8);
+                    trees.push(new Tree(x, width, height));
+                }
+                
+                // Create fireflies
+                for (let i = 0; i < maxFireflies * qualityLevel; i++) {
+                    fireflies.push(new Firefly());
+                }
+                
+                // Create fog particles
+                const fogCount = p.floor(fogDensity * p.width * p.height / 5000);
+                for (let i = 0; i < fogCount; i++) {
+                    fogParticles.push(new FogParticle());
+                }
+                
+                // Create moon
+                moon = {
+                    x: p.width * 0.8,
+                    y: p.height * 0.2,
+                    size: p.width * 0.1,
+                    glowSize: p.width * 0.3,
+                    phase: p.random(p.TWO_PI)
+                };
+            };
+
+            p.draw = () => {
+                // Frame rate monitoring and quality adjustment
+                const now = p.millis();
+                if (now - lastFrameTime > 1000) {
+                    frameRateMonitor = p.frameRate();
+                    lastFrameTime = now;
+                    
+                    // Adjust quality if frame rate is low
+                    if (frameRateMonitor < 30 && qualityLevel > 0.5) {
+                        qualityLevel *= 0.9;
+                    } else if (frameRateMonitor > 50 && qualityLevel < 1.5) {
+                        qualityLevel *= 1.1;
+                    }
+                }
+                
+                // Dark forest background
+                p.background(5, 10, 15);
+                
+                // Moon glow
+                p.noStroke();
+                for (let i = 5; i > 0; i--) {
+                    const alpha = p.map(i, 5, 1, 5, 30);
+                    const size = moon.glowSize * (1 + i * 0.1);
+                    p.fill(50, 70, 100, alpha);
+                    p.ellipse(moon.x, moon.y, size, size);
+                }
+                
+                // Moon
+                p.fill(220, 230, 255);
+                p.ellipse(moon.x, moon.y, moon.size, moon.size);
+                
+                // Moon phase (slowly changing)
+                moon.phase += 0.0005;
+                p.fill(5, 10, 15);
+                p.ellipse(
+                    moon.x + p.cos(moon.phase) * moon.size * 0.4,
+                    moon.y,
+                    moon.size * 0.9,
+                    moon.size * 0.9
+                );
+                
+                // Fog layer
+                for (const fog of fogParticles) {
+                    fog.update();
+                    fog.display();
+                }
+                
+                // Trees
+                for (const tree of trees) {
+                    tree.display();
+                }
+                
+                // Fireflies
+                for (const firefly of fireflies) {
+                    firefly.update();
+                    firefly.display();
+                }
+                
+                // Interactive effect - mouse creates a temporary light aura
+                if (p.mouseX > 0 && p.mouseX < p.width && p.mouseY > 0 && p.mouseY < p.height) {
+                    const mouseDist = p.dist(p.mouseX, p.mouseY, p.pmouseX, p.pmouseY);
+                    const intensity = p.constrain(p.map(mouseDist, 0, 50, 0.5, 0.1), 0.1, 0.5);
+                    
+                    for (let i = 0; i < 3; i++) {
+                        const size = 100 + i * 50;
+                        p.fill(255, 240, 200, intensity * (3 - i) * 10);
+                        p.ellipse(p.mouseX, p.mouseY, size, size);
+                    }
+                }
+            };
+
+            p.windowResized = () => {
+                p.resizeCanvas(p.min(p.windowWidth, 1200), p.min(p.windowHeight * 0.9, 800));
+            };
+
+            p.mousePressed = () => {
+                // Spawn additional fireflies on click
+                if (fireflies.length < maxFireflies * 1.5) {
+                    for (let i = 0; i < 5 * qualityLevel; i++) {
+                        fireflies.push(new Firefly());
+                    }
+                }
+            };
+
+            p.touchStarted = () => {
+                // Prevent default touch behavior
+                return false;
+            };
+        };
+
+        new p5(sketch);
+    
+  // Fullscreen toggle
+  document.getElementById('fs-toggle').addEventListener('click', function() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => {
+        console.log('Fullscreen request failed: ', err);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  });
+  
+  // Hide fullscreen button after inactivity
+  const fsButton = document.getElementById('fs-toggle');
+  let timeout;
+  document.addEventListener('mousemove', function() {
+    fsButton.style.opacity = '0.3';
+    clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      fsButton.style.opacity = '0';
+    }, 2000);
+  });
+  </script>
+
+              
+          
+                
+          
+              
